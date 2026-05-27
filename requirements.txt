@@ -1,0 +1,13 @@
+# PE-Sleuth — Program-level Semantics + Static Feature Fusion
+# Python 3.10+
+#
+# API-based LLM inference (DeepSeek V4 Pro via OpenAI-compatible protocol)
+# No local GPU / model weights required.
+
+# ── Core ──
+openai>=1.0.0,<3.0.0
+tiktoken>=0.5.0
+tqdm>=4.64.0
+
+# ── Optional ──
+python-dotenv>=1.0.0

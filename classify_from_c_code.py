@@ -18,7 +18,7 @@ try:
 except Exception:
     def tqdm(x, **kwargs):
         return x
-from model_server import LLMInterface, LoRALLMInterface, ModelConfig
+from api_client import APIClient, APIConfig
 
 # =========================
 # Config
@@ -53,11 +53,6 @@ class ExperimentConfig:
     RUN_STEP_6_IR_CONSTRUCTION: bool = True
     RUN_STEP_7_CLASSIFICATION: bool = True
     RUN_STEP_8_CLASSIFICATION_RATIONALE: bool = True
-
-    # --- Step 7 behavior knobs ---
-    # If True, Step 7 uses LoRA fine-tuned model (via model_server.LoRALLMInterface).
-    # If False, Step 7 uses the same base model as Steps 4/5.
-    USE_LORA_FOR_CLASSIFICATION: bool = True
 
     # --- Ablation toggles ---
     RUN_ABLATION_E_META: bool = True
@@ -191,32 +186,28 @@ def out_paths(sample_path: Path) -> Dict[str, Path]:
 # Token Counter
 # =========================
 class TokenCounter:
-    def __init__(self, llm: Optional[LLMInterface]):
-        self.llm = llm
-        self.tok = None
-        if llm is not None:
-            try:
-                self.tok = llm.get_tokenizer()
-            except Exception as e:
-                logging.warning(f"Tokenizer not available from LLM: {e}")
+    def __init__(self, client: Optional[APIClient]):
+        self.client = client
 
     def count(self, text: str) -> int:
-        if self.tok:
-            try:
-                ids = self.tok.encode(text, add_special_tokens=False)
-                return len(ids)
-            except Exception:
-                pass
+        if self.client:
+            return self.client.count_tokens(text)
         return max(1, int(len(text) / 3.8))
 
 # =========================
 # LLM Helpers
 # =========================
-def ask_llm(llm: LLMInterface, prompt: str, max_retries: int = 3, backoff: float = 0.7) -> str:
+def ask_llm(
+    client: APIClient,
+    prompt: str,
+    system_prompt: str = "",
+    max_retries: int = 3,
+    backoff: float = 0.7,
+) -> str:
     last = None
     for i in range(max_retries):
         try:
-            return llm.generate(prompt=prompt)
+            return client.chat(prompt=prompt, system_prompt=system_prompt)
         except Exception as e:
             last = e
             time.sleep(backoff * (2 ** i))
@@ -978,7 +969,7 @@ def render_visualization_html(sample_id: str, graph: Dict[str, Any], chunks: Dic
 # =========================
 # Step 4 & 5: Summarization
 # =========================
-def summarize_blocks(llm: LLMInterface, chunks: Dict[str, Any], save_inputs_to: Optional[Path] = None) -> List[Dict[str, Any]]:
+def summarize_blocks(client: APIClient, chunks: Dict[str, Any], save_inputs_to: Optional[Path] = None) -> List[Dict[str, Any]]:
     prompts_log: List[str] = []
     out = []
     for blk in tqdm(chunks.get("sample_blocks", []), desc="LLM chunk summaries"):
@@ -988,7 +979,7 @@ def summarize_blocks(llm: LLMInterface, chunks: Dict[str, Any], save_inputs_to: 
             pure_code = blk.get("code", "").replace("/* --- BLOCK SEPARATOR --- */", "\n\n")
         prompt = ExperimentConfig.PROMPT_CHUNK_SUMMARY.format(code_chunk=pure_code)
         prompts_log.append(f"### {blk['block_id']}\n{prompt}\n")
-        summary = ask_llm(llm, prompt)
+        summary = ask_llm(client, prompt)
         out.append({
             "block_id": blk["block_id"],
             "block_tokens": blk["block_tokens"],
@@ -1004,7 +995,7 @@ def summarize_blocks(llm: LLMInterface, chunks: Dict[str, Any], save_inputs_to: 
 
     return out
 
-def summarize_program(llm: LLMInterface, block_summaries: List[Dict[str, Any]], save_input_to: Optional[Path] = None) -> str:
+def summarize_program(client: APIClient, block_summaries: List[Dict[str, Any]], save_input_to: Optional[Path] = None) -> str:
     joined = "\n\n---\n\n".join(f"[{bs['block_id']}] {bs['summary']}" for bs in block_summaries)
     prompt = ExperimentConfig.PROMPT_PROGRAM_SUMMARY.format(combined_summaries=joined)
     if save_input_to is not None:
@@ -1013,7 +1004,7 @@ def summarize_program(llm: LLMInterface, block_summaries: List[Dict[str, Any]], 
             save_input_to.write_text(prompt, encoding="utf-8")
         except Exception as e:
             logging.warning(f"Failed to save LLM input for program summary: {e}")
-    return ask_llm(llm, prompt).strip()
+    return ask_llm(client, prompt).strip()
 
 
 # =========================
@@ -1076,16 +1067,9 @@ def main():
         logging.warning(f"No .c files found under {input_dir}")
         return
 
-    base_llm = None
-    tc = TokenCounter(None)
-
-    try:
-        # Always load base model first so earlier stages use its tokenizer.
-        base_llm = LLMInterface(ModelConfig())
-        tc = TokenCounter(base_llm)  # use real tokenizer for token budgeting
-    except Exception as e:
-        logging.exception(f"Failed to initialize base model: {e}")
-        return
+    client = APIClient(APIConfig())
+    tc = TokenCounter(client)
+    logging.info(f"API client initialized: model={APIConfig().MODEL_NAME}")
 
     # -----------------------
     # Step 1A
@@ -1157,9 +1141,6 @@ def main():
     # Step 4: chunk summaries
     # -----------------------
     if ExperimentConfig.RUN_STEP_4_CHUNK_SUMMARIZATION:
-        if base_llm is None:
-            logging.error("Base LLM required for Step 4.")
-            return
         for p in tqdm(files, desc="Step 4: chunk summaries"):
             paths = out_paths(p)
             if not ExperimentConfig.OVERWRITE_EXISTING and paths["chunk_summaries"].exists():
@@ -1167,7 +1148,7 @@ def main():
             try:
                 chunks = read_json(paths["chunks"])
                 save_txt = llm_input_path_for(paths["chunk_summaries"]) if ExperimentConfig.SAVE_LLM_INPUTS else None
-                block_summaries = summarize_blocks(base_llm, chunks, save_inputs_to=save_txt)
+                block_summaries = summarize_blocks(client, chunks, save_inputs_to=save_txt)
                 write_json(paths["chunk_summaries"], {"block_summaries": block_summaries})
             except Exception as e:
                 logging.exception(f"Step 4 failed for {p.name}: {e}")
@@ -1176,9 +1157,6 @@ def main():
     # Step 5: program summary
     # -----------------------
     if ExperimentConfig.RUN_STEP_5_PROGRAM_SUMMARIZATION:
-        if base_llm is None:
-            logging.error("Base LLM required for Step 5.")
-            return
         for p in tqdm(files, desc="Step 5: program summary"):
             paths = out_paths(p)
             if not ExperimentConfig.OVERWRITE_EXISTING and paths["program_summary"].exists():
@@ -1186,7 +1164,7 @@ def main():
             try:
                 block_summaries = read_json(paths["chunk_summaries"]).get("block_summaries", [])
                 save_txt = llm_input_path_for(paths["program_summary"]) if ExperimentConfig.SAVE_LLM_INPUTS else None
-                program_summary = summarize_program(base_llm, block_summaries, save_input_to=save_txt)
+                program_summary = summarize_program(client, block_summaries, save_input_to=save_txt)
                 write_json(paths["program_summary"], {"program_summary": program_summary})
             except Exception as e:
                 logging.exception(f"Step 5 failed for {p.name}: {e}")
@@ -1211,31 +1189,6 @@ def main():
     # Step 7: classification
     # -----------------------
     if ExperimentConfig.RUN_STEP_7_CLASSIFICATION:
-        # Decide which model to use for Step 7
-        use_lora = ExperimentConfig.USE_LORA_FOR_CLASSIFICATION
-
-        if use_lora:
-            # Unload BASE to save VRAM before loading LoRA
-            try:
-                if base_llm is not None:
-                    base_llm.unload()
-                    base_llm = None
-            except Exception as e:
-                logging.warning(f"Failed to unload base before LoRA: {e}")
-
-            # Load LoRA model only for Step 7
-            try:
-                clf_llm = LoRALLMInterface(ModelConfig())
-            except Exception as e:
-                logging.exception(f"Failed to initialize LoRA model for classification: {e}")
-                return
-        else:
-            # Use already-loaded BASE model
-            clf_llm = base_llm
-            if clf_llm is None:
-                logging.error("Base model not available for classification.")
-                return
-
         for p in tqdm(files, desc="Step 7: classification"):
             paths = out_paths(p)
             if not ExperimentConfig.OVERWRITE_EXISTING and paths["classification"].exists():
@@ -1247,16 +1200,16 @@ def main():
 
                 # Full IR
                 prompt_full = build_classification_prompt(ir_obj)
-                out_full = ask_llm(clf_llm, prompt_full)
+                out_full = ask_llm(client, prompt_full)
                 lab, just = parse_classification_output(out_full)
                 results["variants"]["full"] = {"prediction": lab, "justification": just, "raw_output": out_full}
                 prompts_log.append(f"### FULL\n{prompt_full}\n")
 
-                # Ablations (use the same classifier)
+                # Ablations (use the same client)
                 if ExperimentConfig.RUN_ABLATION_E_META:
                     e_meta = {"program_summary": ir_obj.get("program_summary")}
                     prompt_e_meta = build_classification_prompt(e_meta)
-                    out_e_meta = ask_llm(clf_llm, prompt_e_meta)
+                    out_e_meta = ask_llm(client, prompt_e_meta)
                     lab_m, just_m = parse_classification_output(out_e_meta)
                     results["variants"]["E-Meta"] = {"prediction": lab_m, "justification": just_m, "raw_output": out_e_meta}
                     prompts_log.append(f"### E-META\n{prompt_e_meta}\n")
@@ -1264,7 +1217,7 @@ def main():
                 if ExperimentConfig.RUN_ABLATION_E_SUMMARY:
                     e_sum = {"global_metadata": ir_obj.get("global_metadata")}
                     prompt_e_sum = build_classification_prompt(e_sum)
-                    out_e_sum = ask_llm(clf_llm, prompt_e_sum)
+                    out_e_sum = ask_llm(client, prompt_e_sum)
                     lab_s, just_s = parse_classification_output(out_e_sum)
                     results["variants"]["E-Summary"] = {"prediction": lab_s, "justification": just_s, "raw_output": out_e_sum}
                     prompts_log.append(f"### E-SUMMARY\n{prompt_e_sum}\n")
@@ -1282,25 +1235,10 @@ def main():
             except Exception as e:
                 logging.exception(f"Step 7 failed for {p.name}: {e}")
 
-        # If we loaded LoRA, unload it after step 7
-        if use_lora:
-            try:
-                clf_llm.unload()
-            except Exception as e:
-                logging.warning(f"Failed to unload LoRA after classification: {e}")
-
     # -----------------------
     # Step 8: rationale
     # -----------------------
     if ExperimentConfig.RUN_STEP_8_CLASSIFICATION_RATIONALE:
-        # Ensure BASE is loaded now (this may be the third load in LoRA case)
-        if base_llm is None:
-            try:
-                base_llm = LLMInterface(ModelConfig())
-            except Exception as e:
-                logging.exception(f"Failed to (re)load base model for rationale: {e}")
-                return
-
         for p in tqdm(files, desc="Step 8: rationale"):
             paths = out_paths(p)
             if not ExperimentConfig.OVERWRITE_EXISTING and paths["rationale"].exists():
@@ -1320,12 +1258,12 @@ def main():
                     except Exception as e:
                         logging.warning(f"Failed to save LLM input for rationale: {e}")
 
-                rationale = ask_llm(base_llm, prompt).strip()
+                rationale = ask_llm(client, prompt).strip()
                 write_json(paths["rationale"], {"label": label, "rationale": rationale})
             except Exception as e:
                 logging.exception(f"Step 8 failed for {p.name}: {e}")
 
-    logging.info("All done (BFS pipeline with single active model).")
+    logging.info("All done (API-based pipeline).")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  PYTHON: './venv/Scripts/python.exe'
+  TEST_PE: 'Binaries\tests\toolkit.exe'
+  TEST_NAME: 'toolkit'
+  REPORT_DIR: 'reports'
+
+env:
+  PYTHONIOENCODING: 'utf-8'
+
+tasks:
+  # ========================================================================
+  # 端到端测试 — 从 PE 二进制到分类结果
+  # ========================================================================
+  test:
+    desc: |
+      端到端测试：toolkit.exe → 反编译 → 分类 → 理由
+      1) 将测试 PE 拷贝到反编译输入目录
+      2) IDA Pro 反编译为 .c
+      3) 拷贝 .c 到分类输入目录
+      4) 运行 8 步分类流水线
+    cmds:
+      - powershell -Command "Copy-Item '{{.TEST_PE}}' 'Decompile\Decompile_Input_Raw_PE\{{.TEST_NAME}}.exe' -Force"
+      - powershell -File scripts/run_decompile.ps1
+      - powershell -Command "Copy-Item 'Decompile\Decompile_Output_C_Code\{{.TEST_NAME}}.c' 'Classify\Classify_Input_C_Code\{{.TEST_NAME}}.c' -Force"
+      - '{{.PYTHON}} classify_from_c_code.py'
+      - 'echo ""'
+      - 'echo === 测试完成，查看结果 ==='
+      - 'echo 分类结果: Classify\Classify_Output_All\7_classification_results\{{.TEST_NAME}}_classification.json'
+      - 'echo 分类理由: Classify\Classify_Output_All\8_classification_rationale\{{.TEST_NAME}}_rationale.json'
+      - 'echo 可视化:   Classify\Classify_Output_All\3_visualizations\{{.TEST_NAME}}_callgraph_chunks.html'
+
+  # ========================================================================
+  # pipeline.py 单文件分析
+  # ========================================================================
+  pipeline-test:
+    desc: |
+      使用 pipeline.py 分析 toolkit.exe，输出完整报告到 reports/
+    cmds:
+      - '{{.PYTHON}} pipeline.py --input "{{.TEST_PE}}" --output "{{.REPORT_DIR}}"'
+      - 'echo ""'
+      - 'echo === 报告已生成 ==='
+      - 'echo 摘要: {{.REPORT_DIR}}\{{.TEST_NAME}}\summary.md'
+      - 'echo 可视化: {{.REPORT_DIR}}\{{.TEST_NAME}}\3_visualizations\{{.TEST_NAME}}_callgraph_chunks.html'
+
+  # ========================================================================
+  # 仅反编译
+  # ========================================================================
+  decompile:
+    desc: 批量反编译 Decompile_Input_Raw_PE/ 中的所有 PE 文件
+    cmds:
+      - powershell -File scripts/run_decompile.ps1
+
+  # ========================================================================
+  # 仅分类
+  # ========================================================================
+  classify:
+    desc: 对 Classify_Input_C_Code/ 中的所有 .c 文件运行分类流水线
+    cmds:
+      - '{{.PYTHON}} classify_from_c_code.py'
+
+  # ========================================================================
+  # 清理测试产物
+  # ========================================================================
+  clean:
+    desc: 清理 toolkit 测试的所有中间产物、输出和报告
+    cmds:
+      - powershell -File scripts/clean.ps1

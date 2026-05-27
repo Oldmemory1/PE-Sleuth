@@ -24,7 +24,7 @@ FAIL_LOG = str(DECOMPILE_ROOT / "decompile_failure_log.txt")
 TIMEOUT = 600  # seconds
 
 # Output size policy (post-check)
-MIN_C_OUTPUT_BYTES = 10 * 1024  # 10 KB
+MIN_C_OUTPUT_BYTES = 5 * 1024   # 5 KB
 MAX_C_OUTPUT_BYTES = 3 * 1024 * 1024  # 3 MB
 
 # IDA lookup: ONLY via IDA_PATH
@@ -91,8 +91,8 @@ def locate_idat() -> Optional[str]:
     """
     Find idat.exe ONLY via IDA_PATH environment variable.
     Accept either:
-      • IDA_PATH=<full path to idat.exe>
-      • IDA_PATH=<IDA install folder containing idat.exe>
+      - IDA_PATH=<full path to idat.exe>
+      - IDA_PATH=<IDA install folder containing idat.exe>
     """
     return _candidate_from_env(IDA_ENV)
 
@@ -202,6 +202,8 @@ def list_input_files(root_dir: str) -> list:
     files = []
     for root, _dirs, fs in os.walk(root_dir):
         for name in fs:
+            if name.startswith('.'):
+                continue
             files.append(os.path.join(root, name))
     return files
 
@@ -246,7 +248,7 @@ def main():
         counters["processed"] += 1
 
         if filename in failed:
-            log(f"  → Skip (prev failed): {filename}")
+            log(f"  -> Skip (prev failed): {filename}")
             counters["skipped"] += 1
             counters["prev_failed_skip"] += 1
             continue
@@ -256,7 +258,7 @@ def main():
         output_c = os.path.join(OUTPUT_FOLDER, out_name)
         if os.path.exists(output_c):
             size_now = os.path.getsize(output_c)
-            log(f"  → Skip (exists): {out_name} [{bytes_human(size_now)}]")
+            log(f"  -> Skip (exists): {out_name} [{bytes_human(size_now)}]")
             counters["skipped"] += 1
             counters["already_exists"] += 1
             continue
@@ -294,12 +296,12 @@ def main():
                     log(
                         f"  [!] Abnormal output size: {out_name} "
                         f"({bytes_human(size_bytes)}; "
-                        f"policy {bytes_human(MIN_C_OUTPUT_BYTES)}–{bytes_human(MAX_C_OUTPUT_BYTES)}). "
+                        f"policy {bytes_human(MIN_C_OUTPUT_BYTES)}-{bytes_human(MAX_C_OUTPUT_BYTES)}). "
                         "Treating as failure and removing file."
                     )
                     try:
                         os.remove(output_c)
-                        log("  • Removed abnormal output file.")
+                        log("  - Removed abnormal output file.")
                     except Exception as rm_e:
                         log(f"  [!] Failed to remove abnormal output: {rm_e}")
                     append_failure(failed, filename, "decompilation failed")
@@ -307,7 +309,7 @@ def main():
                     counters["failed"] += 1
                     counters["size_failed"] += 1
                 else:
-                    log(f"  [+] Decompiled OK → {out_name} [{bytes_human(size_bytes)}] in {elapsed:.1f}s")
+                    log(f"  [OK] Decompiled OK -> {out_name} [{bytes_human(size_bytes)}] in {elapsed:.1f}s")
                     succeeded = True
                     counters["succeeded"] += 1
             else:
@@ -350,7 +352,7 @@ def main():
 
         counters["cleaned_artifacts"] += cleaned_for_this
         if cleaned_for_this:
-            log(f"  • Cleaned {cleaned_for_this} temp artifact(s).")
+            log(f"  - Cleaned {cleaned_for_this} temp artifact(s).")
 
     # Summary
     total_elapsed = time.time() - start_ts

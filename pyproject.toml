@@ -1,0 +1,51 @@
+[project]
+name = "pe-sleuth"
+version = "1.0.0"
+description = "Program-level Semantics and Static Feature Fusion for Interpretable Ransomware Detection with LLMs"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Dai Hao" }]
+keywords = [
+    "ransomware-detection",
+    "portable-executable",
+    "program-semantics",
+    "static-analysis",
+    "large-language-models",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "openai>=1.0.0,<3.0.0",
+    "tiktoken>=0.5.0",
+    "tqdm>=4.64.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+pe-sleuth = "pipeline:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+    "api_client",
+    "batch_decompile_ida",
+    "classify_from_c_code",
+    "pipeline",
+]

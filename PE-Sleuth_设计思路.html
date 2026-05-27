@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PE-Sleuth：勒索软件检测框架设计思路</title>
+<style>
+  :root {
+    --primary: #1a56db;
+    --primary-light: #e8f0fe;
+    --danger: #c5221f;
+    --danger-light: #fce8e6;
+    --success: #137333;
+    --success-light: #e6f4ea;
+    --gray-50: #f8f9fa;
+    --gray-100: #f1f3f4;
+    --gray-200: #e8eaed;
+    --gray-300: #dadce0;
+    --gray-500: #9aa0a6;
+    --gray-700: #5f6368;
+    --gray-900: #202124;
+    --text: #1a1a1a;
+    --radius: 10px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.1);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,.12);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #ffffff;
+    color: var(--text);
+    line-height: 1.8;
+    font-size: 16px;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, #0b1e3d 0%, #1a3a6b 40%, #1a56db 100%);
+    color: #fff;
+    padding: 64px 0 56px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  }
+  .hero h1 {
+    font-size: 2.4rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    position: relative;
+    margin-bottom: 12px;
+  }
+  .hero .subtitle {
+    font-size: 1.1rem;
+    opacity: .82;
+    font-weight: 400;
+    position: relative;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  .hero .badge-row {
+    margin-top: 24px;
+    position: relative;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .hero .badge {
+    background: rgba(255,255,255,.15);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255,255,255,.22);
+    padding: 5px 16px;
+    border-radius: 20px;
+    font-size: .88rem;
+    letter-spacing: .02em;
+  }
+
+  /* ── Container ── */
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 28px;
+  }
+
+  /* ── Section headings ── */
+  .section-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #0b1e3d;
+    margin: 48px 0 6px;
+    padding-bottom: 8px;
+    border-bottom: 3px solid var(--primary);
+    display: inline-block;
+  }
+  .section-subtitle {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #1a3a6b;
+    margin: 28px 0 8px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin: 20px 0;
+    box-shadow: var(--shadow-sm);
+  }
+  .card h3 {
+    font-size: 1.08rem;
+    font-weight: 700;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* ── Pipeline diagram ── */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0;
+    margin: 32px 0;
+    padding: 0;
+  }
+  .pipeline .stage {
+    background: #fff;
+    border: 2px solid var(--gray-300);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    text-align: center;
+    min-width: 130px;
+    box-shadow: var(--shadow-sm);
+    transition: transform .15s, box-shadow .15s;
+    position: relative;
+    z-index: 1;
+  }
+  .pipeline .stage:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary);
+  }
+  .pipeline .stage .num {
+    display: inline-block;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    font-weight: 700;
+    font-size: .85rem;
+    line-height: 28px;
+    margin-bottom: 8px;
+  }
+  .pipeline .stage .label {
+    font-weight: 700;
+    font-size: .92rem;
+    color: #1a3a6b;
+  }
+  .pipeline .stage .detail {
+    font-size: .78rem;
+    color: var(--gray-700);
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+  .pipeline .arrow {
+    font-size: 1.6rem;
+    color: var(--gray-500);
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+  @media (max-width: 800px) {
+    .pipeline { flex-direction: column; gap: 8px; }
+    .pipeline .arrow { transform: rotate(90deg); }
+  }
+
+  /* ── Architecture diagram ── */
+  .arch-diagram {
+    margin: 28px 0;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .arch-row {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .arch-block {
+    padding: 22px 24px;
+    flex: 1;
+    min-width: 200px;
+    text-align: center;
+    border-right: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .arch-block:last-child { border-right: none; }
+  .arch-row:last-child .arch-block { border-bottom: none; }
+  .arch-block.top { background: #f0f5ff; }
+  .arch-block.mid { background: #fafafa; }
+  .arch-block.bot { background: #f0faf3; }
+  .arch-block .icon {
+    font-size: 1.8rem;
+    margin-bottom: 6px;
+  }
+  .arch-block .title {
+    font-weight: 700;
+    font-size: .95rem;
+    color: #1a3a6b;
+    margin-bottom: 4px;
+  }
+  .arch-block .desc {
+    font-size: .8rem;
+    color: var(--gray-700);
+    line-height: 1.5;
+  }
+
+  /* ── Feature box ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 18px;
+    margin: 20px 0;
+  }
+  .feature {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow-sm);
+  }
+  .feature .icon { font-size: 1.5rem; margin-bottom: 8px; }
+  .feature h4 { font-size: .98rem; font-weight: 700; margin-bottom: 6px; }
+  .feature p  { font-size: .88rem; color: var(--gray-700); line-height: 1.6; }
+
+  /* ── Table ── */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: .9rem;
+    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .data-table thead { background: #1a3a6b; color: #fff; }
+  .data-table th {
+    padding: 12px 16px;
+    text-align: center;
+    font-weight: 600;
+    font-size: .85rem;
+  }
+  .data-table td {
+    padding: 10px 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .data-table tbody tr:hover { background: var(--primary-light); }
+  .data-table .best { font-weight: 700; color: var(--primary); }
+  .data-table .row-header { text-align: left; font-weight: 600; }
+
+  /* ── Info callouts ── */
+  .callout {
+    border-left: 4px solid var(--primary);
+    background: var(--primary-light);
+    padding: 14px 20px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 18px 0;
+    font-size: .92rem;
+  }
+  .callout.warn {
+    border-left-color: #e37400;
+    background: #fef7e0;
+  }
+  .callout.success {
+    border-left-color: var(--success);
+    background: var(--success-light);
+  }
+
+  /* ── Timeline / flow ── */
+  .flow-list {
+    list-style: none;
+    padding: 0;
+    margin: 18px 0;
+  }
+  .flow-list li {
+    position: relative;
+    padding: 8px 0 8px 36px;
+    font-size: .94rem;
+  }
+  .flow-list li::before {
+    content: '';
+    position: absolute;
+    left: 8px; top: 16px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 2px var(--primary);
+  }
+  .flow-list li::after {
+    content: '';
+    position: absolute;
+    left: 12px; top: 26px;
+    width: 2px; height: calc(100% - 10px);
+    background: var(--gray-300);
+  }
+  .flow-list li:last-child::after { display: none; }
+  .flow-list li strong { color: #1a3a6b; }
+
+  /* ── Prose ── */
+  p { margin: 12px 0; }
+  strong { color: #1a1a1a; }
+  code {
+    background: var(--gray-100);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: .9em;
+    font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+    color: #c5221f;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 36px;
+    color: var(--gray-500);
+    font-size: .85rem;
+    border-top: 1px solid var(--gray-200);
+    margin-top: 48px;
+  }
+
+  /* ── FCG viz ── */
+  .fcg-demo {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 20px 0;
+  }
+  .fcg-svg {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .fcg-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: .85rem;
+  }
+  .fcg-legend span {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ── Comparison highlight ── */
+  .highlight-compare {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 20px 0;
+  }
+  .highlight-compare > div {
+    flex: 1;
+    min-width: 200px;
+    padding: 20px 24px;
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .highlight-compare .old {
+    background: var(--danger-light);
+    border: 1px solid #f5c6c2;
+  }
+  .highlight-compare .new {
+    background: var(--success-light);
+    border: 1px solid #b7d7b0;
+  }
+  .highlight-compare h4 { font-size: 1rem; margin-bottom: 6px; }
+  .highlight-compare p  { font-size: .85rem; color: var(--gray-700); line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<header class="hero">
+  <h1>PE-Sleuth</h1>
+  <p class="subtitle">
+    融合程序级语义与静态特征，借助大语言模型实现可解释的勒索软件检测
+  </p>
+  <div class="badge-row">
+    <span class="badge">程序级语义</span>
+    <span class="badge">静态特征融合</span>
+    <span class="badge">大语言模型</span>
+    <span class="badge">可解释 AI</span>
+    <span class="badge">零样本 + 微调</span>
+  </div>
+</header>
+
+<div class="container">
+
+<!-- ═══════════════ 1. 背景与动机 ═══════════════ -->
+<h2 class="section-title">1. 背景与动机</h2>
+
+<p>
+  勒索软件（Ransomware）以加密文件并索要赎金为核心攻击手段，已成为企业和公共机构面临的
+  <strong>最严重安全威胁之一</strong>。尤其在 Windows 平台上，可移植可执行文件（PE）是软件分发的主要载体，
+  基于 PE 文件的静态检测因此具有重要的工程价值。
+</p>
+
+<div class="highlight-compare">
+  <div class="old">
+    <h4>传统方法的三大瓶颈</h4>
+    <p>特征覆盖有限、对抗鲁棒性不足</p>
+    <p>缺乏可解释的审计证据</p>
+    <p>跨领域自适应的重训练成本高</p>
+  </div>
+  <div class="new">
+    <h4>PE-Sleuth 的应对策略</h4>
+    <p>程序级语义 + 静态特征双源融合</p>
+    <p>LLM 生成人类可读的推理依据</p>
+    <p>零样本基座 + LoRA 微调双模式</p>
+  </div>
+</div>
+
+<p>
+  现有方法大致分为三类：<strong>签名/规则方法</strong>轻量但易被混淆绕过；<strong>手工特征 + 机器学习</strong>
+  依赖 PE 头、字符串等有限特征，泛化能力弱；<strong>深度端到端模型</strong>闭集准确率高但缺乏可审计证据，
+  且在分布偏移下泛化较差。此外，目前将 LLM 用于 PE 勒索软件检测的研究极为稀缺——代表性工作 LAMD
+  仅针对 Android 应用，聚焦于安全敏感 API 的局部上下文，难以应对 Windows/PE 场景下沿调用流和数据流
+  分布的恶意逻辑。
+</p>
+
+<div class="callout">
+  <strong>核心洞察：</strong>PE-Sleuth 的出发点是——恶意代码的<strong>语义意图</strong>往往超越原始字节模式，
+  深藏于控制流、数据引用和系统调用之中。通过<strong>反编译 + 调用图划分 + 层次化语义抽象</strong>，
+  可以从二进制代码中提取出 LLM 可理解、可推理的程序级语义表示。
+</div>
+
+<!-- ═══════════════ 2. 总体架构 ═══════════════ -->
+<h2 class="section-title">2. 总体架构：四阶段流水线</h2>
+
+<p>
+  PE-Sleuth 的核心是一条<strong>端到端的静态检测流水线</strong>，将 PE 二进制样本从原始字节
+  逐步转化为可审计的分类结论与推理依据。整个流程由四个阶段组成：
+</p>
+
+<!-- Pipeline -->
+<div class="pipeline">
+  <div class="stage">
+    <div class="num">1</div>
+    <div class="label">反编译</div>
+    <div class="detail">PE → C 源码<br>IDA Pro / Hex-Rays</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="stage">
+    <div class="num">2</div>
+    <div class="label">语义抽象</div>
+    <div class="detail">FCG 划分<br>块级 → 程序级</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="stage">
+    <div class="num">3</div>
+    <div class="label">静态特征提取</div>
+    <div class="detail">字符串/导入/声明<br>预算归一化</div>
+  </div>
+  <div class="arrow">→</div>
+  <div class="stage">
+    <div class="num">4</div>
+    <div class="label">分类 & 推理依据</div>
+    <div class="detail">LLM 二分类<br>证据链生成</div>
+  </div>
+</div>
+
+<!-- Architecture detail -->
+<div class="arch-diagram">
+  <div class="arch-row">
+    <div class="arch-block top" style="flex:1">
+      <div class="icon">📦</div>
+      <div class="title">PE 二进制样本</div>
+      <div class="desc">原始 Windows 可执行文件</div>
+    </div>
+    <div class="arch-block top" style="flex:1">
+      <div class="icon">🔧</div>
+      <div class="title">IDA Pro 批量反编译</div>
+      <div class="desc">idat.exe + Hex-Rays<br><code>-Ohexrays:new:-nosave:target name:ALL</code></div>
+    </div>
+  </div>
+  <div class="arch-row">
+    <div class="arch-block mid" style="flex:1">
+      <div class="icon">🔀</div>
+      <div class="title">FCG 划分<br><small>（函数调用图感知）</small></div>
+      <div class="desc">按调用关系分块<br>32K token 上限<br>连通子图优先<br>哈希去重 + 贪婪合并</div>
+    </div>
+    <div class="arch-block mid" style="flex:1">
+      <div class="icon">🧠</div>
+      <div class="title">语义抽象<br><small>（块级 → 程序级）</small></div>
+      <div class="desc">LLM 逐块行为提取<br>中立提示避免偏差<br>逐块语义聚合提炼</div>
+    </div>
+    <div class="arch-block mid" style="flex:1">
+      <div class="icon">📋</div>
+      <div class="title">静态特征提取<br><small>（≤ 1000 token）</small></div>
+      <div class="desc">字符串 · 导入 · 声明 · 可疑指标<br>去重 → 排序 → 配额裁剪</div>
+    </div>
+  </div>
+  <div class="arch-row">
+    <div class="arch-block bot" style="flex:1">
+      <div class="icon">🔍</div>
+      <div class="title">中间表示（IR）</div>
+      <div class="desc">程序级语义 + 静态特征<br>融合为统一表示</div>
+    </div>
+    <div class="arch-block bot" style="flex:1">
+      <div class="icon">🏷️</div>
+      <div class="title">LLM 分类</div>
+      <div class="desc">强信号规则辅助<br>RANSOMWARE / BENIGN<br>零样本 & LoRA 微调</div>
+    </div>
+    <div class="arch-block bot" style="flex:1">
+      <div class="icon">📝</div>
+      <div class="title">推理依据生成</div>
+      <div class="desc">触发证据 → 受影响目标<br>→ 潜在误报分析<br>面向分析师的可审计输出</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ 3. 各阶段详解 ═══════════════ -->
+<h2 class="section-title">3. 各阶段详细设计</h2>
+
+<!-- 3.1 反编译 -->
+<h3 class="section-subtitle">3.1 阶段一：反编译（Decompile）</h3>
+
+<div class="card">
+  <h3>🔧 二进制 → C 源代码</h3>
+  <p>
+    使用 <strong>IDA Pro 的 idat.exe</strong> 进行批量自动化反编译，调用 Hex-Rays 反编译器将每条
+    x86/x64 指令翻译为结构化的 C 代码。这一步骤是连接"原始二进制"与"LLM 可读表示"的关键桥梁——
+    低级指令被转换为暴露<strong>控制流结构、数据引用和语义线索</strong>的 C 源码，
+    使得后续的 LLM 分析成为可能。
+  </p>
+  <p>
+    反编译参数 <code>-Ohexrays:new:-nosave:target name:ALL</code> 确保所有函数均被完整导出，
+    生成 <code>.c</code> 文件供下游阶段使用。
+  </p>
+</div>
+
+<!-- 3.2 语义抽象 -->
+<h3 class="section-subtitle">3.2 阶段二：语义抽象（Semantic Abstraction）</h3>
+
+<p>
+  这是 PE-Sleuth 的<strong>核心创新环节</strong>。由于 LLM 的上下文长度有限（本文设定为 32,768 token），
+  无法一次性摄入完整的反编译源码。语义抽象阶段通过三个协同子步骤，在保证语义完整性的前提下
+  将长代码转换为紧凑的程序级语义：
+</p>
+
+<div class="card">
+  <h3>📐 子步骤 1：FCG 划分（FCG Partitioning）</h3>
+  <p>
+    从反编译 C 代码中解析<strong>函数列表和调用边</strong>，构建函数调用图（Function Call Graph, FCG）。
+    将 FCG 划分为连通子图，按照每块 <strong>32,768 token</strong> 的严格上限打包。关键策略包括：
+  </p>
+  <ul class="flow-list">
+    <li><strong>调用邻近优先：</strong>调用关系紧密的函数优先归入同一块，保持语义连续性</li>
+    <li><strong>语法感知切割：</strong>超大函数优先在花括号边界处分割，避免破坏语法结构</li>
+    <li><strong>滑动窗口兜底：</strong>若仍超出限制，使用滑动窗口确保每个片段可处理</li>
+    <li><strong>哈希去重：</strong>消除跨块的重复函数体，减少冗余分析</li>
+    <li><strong>贪婪合并：</strong>初始划分后，将相邻小块合并至 98% 容量上限，减少 LLM 调用次数</li>
+  </ul>
+  <p style="margin-top:14px">
+    <strong>可视化与质量控制：</strong>FCG 和块分配以彩色图形式渲染（如原论文 Fig. 2 所示）——
+    节点表示函数，边表示调用关系，颜色标识块归属。不连通子图自然映射到不同块，
+    过大子图按调用邻近性分割。
+  </p>
+</div>
+
+<div class="card">
+  <h3>🔬 子步骤 2：块级分析（Block-level Analysis）</h3>
+  <p>
+    每个代码块被 LLM 以<strong>简洁、中立的提示</strong>进行分析。LLM 被约束为"代码行为提取器"
+    的角色，输出该块的<strong>块级语义</strong>描述。关键设计决策：
+  </p>
+  <ul class="flow-list">
+    <li><strong>刻意避免良性/恶意暗示：</strong>提示中不包含任何分类倾向，降低偏差</li>
+    <li><strong>保留非判别性行为：</strong>即使某些行为不与勒索软件直接相关，仍然记录——这些信息对后续推理有价值</li>
+    <li><strong>行为而非标签：</strong>输出聚焦于"这段代码做了什么"而非"它看起来可疑吗"</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>🧩 子步骤 3：程序级分析（Program-level Analysis）</h3>
+  <p>
+    所有块级语义被合并提交给 LLM，<strong>提炼为统一的程序级语义</strong>。提示要求 LLM：
+  </p>
+  <ul class="flow-list">
+    <li>给出<strong>紧凑的整体评估</strong></li>
+    <li>突出<strong>最具信息量的行为</strong>及其理由</li>
+    <li>为下游分类呈现<strong>高价值的语义信号</strong></li>
+  </ul>
+  <p style="margin-top:14px">
+    这种"先分后合"的层次化抽象策略，既克服了 LLM 的上下文长度限制，
+    又确保了完整程序的语义意图得以保留——这是 PE-Sleuth 相比仅关注局部 API 上下文的方法
+    的核心优势所在。
+  </p>
+</div>
+
+<!-- 3.3 静态特征提取 -->
+<h3 class="section-subtitle">3.3 阶段三：静态特征提取（Static Features Extraction）</h3>
+
+<div class="card">
+  <h3>📋 双源融合的第一极——全局静态线索</h3>
+  <p>
+    在严格 <strong>1,000 token</strong> 的长度预算下，从反编译源码和 IDA 注释中提取并归一化静态特征，
+    作为程序级语义的<strong>互补信号</strong>。该阶段同样包含两个子步骤：
+  </p>
+
+  <h4 style="margin-top:16px">提取（Extraction）—— 四类特征</h4>
+  <div class="feature-grid">
+    <div class="feature">
+      <div class="icon">📝</div>
+      <h4>字符串</h4>
+      <p>代码中的硬编码字符串，常包含域名、路径、注册表键、勒索信息等关键线索</p>
+    </div>
+    <div class="feature">
+      <div class="icon">📥</div>
+      <h4>外部 API 导入</h4>
+      <p>程序依赖的系统 API，即使导入表被混淆，反编译仍可揭示实际调用的 API</p>
+    </div>
+    <div class="feature">
+      <div class="icon">🌐</div>
+      <h4>全局声明</h4>
+      <p>全局变量声明，揭示程序的状态管理和数据流转模式</p>
+    </div>
+    <div class="feature">
+      <div class="icon">⚠️</div>
+      <h4>可疑指标</h4>
+      <p>卷影副本删除、大规模加密、勒索信逻辑、密码学初始化等典型行为信号</p>
+    </div>
+  </div>
+
+  <h4 style="margin-top:16px">归一化（Normalization）—— 预算感知裁剪</h4>
+  <ul class="flow-list">
+    <li><strong>规范化 & 去重：</strong>统一格式，消除重复项</li>
+    <li><strong>预算感知排序：</strong>按重要性排列，每类配额约 60 字符串 / 40 导入 / 30 声明</li>
+    <li><strong>确定性裁剪：</strong>优先移除低优先级条目，确保高风险匹配和主调用路径上的条目得以保留</li>
+  </ul>
+</div>
+
+<div class="callout">
+  <strong>设计意图：</strong>静态特征虽然来自"表层"信息，但描绘了程序的<strong>能力边界</strong>——
+  文件/注册表/服务控制、进程终止、密码学操作——即使函数级语义分析不够深入时，
+  静态特征仍能提供关键的全局佐证。1,000 token 的预算约束确保该信息源保持轻量。
+</div>
+
+<!-- 3.4 分类与推理依据 -->
+<h3 class="section-subtitle">3.4 阶段四：分类与推理依据（Classification & Rationale）</h3>
+
+<div class="card">
+  <h3>🏷️ 子步骤 1：分类（Classification）</h3>
+  <p>
+    将<strong>程序级语义 + 归一化静态特征</strong>融合为中间表示（IR），
+    提交给 LLM 进行二分类判决。分类策略包含两层机制：
+  </p>
+
+  <h4 style="margin-top:14px">强信号规则（降低漏报）</h4>
+  <p>
+    在 LLM 推理之前，先进行规则匹配。若 IR 中包含以下任一强信号，
+    样本直接标记为 <code>RANSOMWARE</code>：
+  </p>
+  <div class="feature-grid">
+    <div class="feature"><h4>🔴 卷影副本删除</h4><p><code>vssadmin</code>、<code>delete shadows</code> 等命令/字符串</p></div>
+    <div class="feature"><h4>🔴 勒索通信</h4><p><code>.onion</code> 地址、勒索相关短语</p></div>
+    <div class="feature"><h4>🔴 解密行为触发</h4><p>包含解密相关逻辑（暗示加密已执行）</p></div>
+    <div class="feature"><h4>🔴 密码学 API 调用</h4><p><code>CryptAcquireContext</code> 等初始化 API</p></div>
+    <div class="feature"><h4>🔴 大规模文件加密</h4><p>程序级语义指示批量加密行为</p></div>
+    <div class="feature"><h4>🔴 服务终止</h4><p>为便于加密而终止安全/备份服务</p></div>
+  </div>
+
+  <h4 style="margin-top:16px">LLM 整体判决（无强信号命中时）</h4>
+  <p>
+    若无强信号命中，则由 LLM 基于 IR 进行<strong>整体性综合判定</strong>。
+    文中评估了两种 LLM 配置：
+  </p>
+  <ul class="flow-list">
+    <li><strong>零样本基座模型（Base）：</strong>直接使用 Qwen3-14B 的预训练能力进行推理</li>
+    <li><strong>LoRA 微调模型（Fine-tuned）：</strong>在训练集上以秩 24、alpha 48、dropout 0.15 进行监督微调，
+    使用 4-bit 量化降低显存占用</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>📝 子步骤 2：推理依据生成（Rationale Generation）</h3>
+  <p>
+    分类结果与 IR <strong>再次提交</strong>给 LLM，生成面向安全分析师的<strong>简明推理依据</strong>。
+    提示聚焦于三个维度：
+  </p>
+  <ul class="flow-list">
+    <li><strong>触发证据：</strong>哪些具体的行为/特征导致了该分类决策</li>
+    <li><strong>受影响目标：</strong>哪些文件、服务或系统组件是攻击的目标</li>
+    <li><strong>潜在误报分析：</strong>是否存在良性软件可能表现出类似行为的场景</li>
+  </ul>
+  <p style="margin-top:14px">
+    这一步骤是 PE-Sleuth <strong>"可解释性"承诺的关键实现</strong>——它将分类决策与
+    数据流路径、API 调用链等具体证据链接起来，支持人工审计和结果复现。
+  </p>
+</div>
+
+<!-- ═══════════════ 4. 实验设计 ═══════════════ -->
+<h2 class="section-title">4. 实验设计与关键结果</h2>
+
+<h3 class="section-subtitle">4.1 数据集与实验环境</h3>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr><th>配置项</th><th>详情</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="row-header">数据集</td><td>Ransomware PE Header Feature Dataset (Mendeley v3)：2,157 样本（1,134 良性 + 1,023 勒索软件）</td></tr>
+      <tr><td class="row-header">训练/测试划分</td><td>7:3</td></tr>
+      <tr><td class="row-header">GPU 环境</td><td>AutoDL 云平台，单卡 48 GB 虚拟 GPU，20 vCPU (Intel Xeon Platinum 8470Q)</td></tr>
+      <tr><td class="row-header">LLM 模型</td><td>Qwen3-14B（140 亿参数），本地化部署，不调用外部 API</td></tr>
+      <tr><td class="row-header">推理配置</td><td>BitsAndBytes 4-bit nf4 量化 + FlashAttention；max_len=32,768，gen_len=512，T=0.5，top_p=0.9</td></tr>
+      <tr><td class="row-header">微调配置</td><td>LLaMA-Factory SFT；LoRA rank=24, alpha=48, dropout=0.15, q4 量化训练</td></tr>
+      <tr><td class="row-header">评估指标</td><td>ACC、Precision、Recall、F1</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3 class="section-subtitle">4.2 核心实验结果</h3>
+
+<div class="card">
+  <table class="data-table">
+    <thead>
+      <tr><th>模型配置</th><th>输入信息源</th><th>ACC</th><th>Precision</th><th>Recall</th><th>F1</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Base-Full</td><td>程序级语义 + 静态特征</td><td>—</td><td>0.9545</td><td>0.7000</td><td>0.8077</td></tr>
+      <tr><td>Base-Semantics</td><td>仅程序级语义</td><td>—</td><td>—</td><td>—</td><td>0.7870</td></tr>
+      <tr><td>Base-Static</td><td>仅静态特征</td><td>—</td><td>—</td><td>—</td><td>0.4895</td></tr>
+      <tr style="background:#e6f4ea">
+        <td class="best">Fine-tuned-Full</td>
+        <td class="best">程序级语义 + 静态特征</td>
+        <td class="best">0.9718</td>
+        <td class="best">0.9739</td>
+        <td class="best">0.9667</td>
+        <td class="best">0.9703</td>
+      </tr>
+      <tr><td>Fine-tuned-Static</td><td>仅静态特征</td><td>—</td><td>—</td><td>—</td><td>0.9470</td></tr>
+      <tr><td>Fine-tuned-Semantics</td><td>仅程序级语义</td><td>—</td><td>—</td><td>—</td><td>0.7948</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout success">
+  <strong>最佳性能：</strong>Fine-tuned-Full（双源融合 + LoRA 微调）在全部四项指标上均取得最优——
+  ACC <strong>0.9718</strong>，F1 <strong>0.9703</strong>。相比 Base-Full（F1=0.8077），
+  提升主要来自召回率从 0.7000 → 0.9667，验证了微调使模型能更好地识别多样化的勒索软件行为模式。
+</div>
+
+<div class="feature-grid">
+  <div class="feature">
+    <h4>🔍 零样本场景</h4>
+    <p>仅程序级语义（F1=0.7870）接近全量（F1=0.8077），远优于仅静态特征（F1=0.4895）。
+    表明<strong>无监督信号时，程序级语义更能被模型有效利用</strong>。</p>
+  </div>
+  <div class="feature">
+    <h4>🎯 有监督场景</h4>
+    <p>仅静态特征（F1=0.9470）接近全量（F1=0.9703），远超仅程序级语义（F1=0.7948）。
+    表明<strong>固定结构的静态特征更有利于参数更新学习稳定判别特征</strong>。</p>
+  </div>
+  <div class="feature">
+    <h4>🤝 融合增益</h4>
+    <p>无论基座还是微调，全量输入均优于任一单源输入，验证了<strong>程序级语义与静态特征的互补性</strong>。</p>
+  </div>
+  <div class="feature">
+    <h4>📊 与基线对比</h4>
+    <p>PE-Sleuth 性能优于或持平 MLP、CNN、PCA-NB 三种代表性方法，同时<strong>额外提供可解释输出</strong>。</p>
+  </div>
+</div>
+
+<!-- ═══════════════ 5. 设计亮点总结 ═══════════════ -->
+<h2 class="section-title">5. 设计亮点总结</h2>
+
+<div class="feature-grid">
+  <div class="feature">
+    <div class="icon">🏗️</div>
+    <h4>层次化语义抽象</h4>
+    <p>FCG 划分 → 块级分析 → 程序级聚合。先分后合，既克服 LLM 上下文长度限制，
+    又保留完整程序的语义意图，对加壳和间接调用具有更强鲁棒性。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🔗</div>
+    <h4>双源信息融合</h4>
+    <p>深度语义（程序级语义）与广度线索（静态特征）互补——
+    前者捕获行为意图，后者描绘能力边界。实验结果证明 1+1 > 2。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🧠</div>
+    <h4>LLM 驱动的推理</h4>
+    <p>利用 LLM 的代码理解与推理能力进行二分类，突破传统手工特征和端到端模型在可解释性上的局限。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🎯</div>
+    <h4>强信号规则兜底</h4>
+    <p>在 LLM 推理前进行规则匹配，对高风险模式零容忍，有效降低漏报率。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🔧</div>
+    <h4>LoRA 高效微调</h4>
+    <p>以极低参数开销（rank=24）实现显著性能提升，支持在有限算力下的领域自适应，
+    已开源微调权重。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">📝</div>
+    <h4>可审计的推理依据</h4>
+    <p>分类决策附带触发证据、受影响目标和误报分析，将黑盒预测转化为透明、
+    可复现的分析报告。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🔬</div>
+    <h4>消融实验设计</h4>
+    <p>系统性评估了不同信息源（语义 vs 静态）和不同训练范式（零样本 vs 微调）的贡献，
+    揭示了它们在零样本/有监督场景下的差异化优势。</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🌐</div>
+    <h4>全本地化部署</h4>
+    <p>整个工作流本地化运行，不调用外部 API，使用 4-bit 量化在单卡 48GB GPU 上
+    运行 14B 参数模型，具备工程可行性。</p>
+  </div>
+</div>
+
+<!-- ═══════════════ 6. 适用场景 ═══════════════ -->
+<h2 class="section-title">6. 适用场景与部署建议</h2>
+
+<div class="card">
+  <h3>🎯 部署策略</h3>
+  <div class="feature-grid">
+    <div class="feature">
+      <h4>🏢 企业安全运营</h4>
+      <p>推荐使用 <strong>Fine-tuned-Full</strong> 配置（双源 + 微调），实现高召回与高精确率的最佳平衡，
+      附带推理依据支持安全分析师快速研判。</p>
+    </div>
+    <div class="feature">
+      <h4>🔬 威胁狩猎（零样本）</h4>
+      <p>在缺乏标注样本的新领域/新家族检测中，<strong>优先使用程序级语义</strong>（Base-Semantics），
+      无需重训练即可获得接近全量的性能。</p>
+    </div>
+    <div class="feature">
+      <h4>⚡ 高吞吐场景</h4>
+      <p>若计算资源受限或需极高吞吐量，可考虑 <strong>Fine-tuned-Static</strong>（仅静态特征）——
+      跳过语义抽象阶段，以小幅性能损失换取显著加速。</p>
+    </div>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<footer class="footer">
+  <p>PE-Sleuth：程序级语义与静态特征融合的可解释勒索软件检测框架</p>
+  <p style="margin-top:4px">原文：PE-Sleuth: Program-Level Semantics and Static Feature Fusion for
+  Interpretable Ransomware Detection with LLMs</p>
+</footer>
+
+</body>
+</html>

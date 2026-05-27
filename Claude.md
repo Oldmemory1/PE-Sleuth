@@ -1,0 +1,1 @@
+我已经为你创建了Python3.10的环境，请不要安装全局的Python软件包，请使用虚拟环境中的这个Python：./venv/Scripts/python.exe

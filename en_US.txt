@@ -1,0 +1,87 @@
+PE-SLEUTH: PROGRAM-LEVEL SEMANTICS AND STATIC FEATURE FUSION FOR INTERPRETABLE RANSOMWARE DETECTION WITH LLMS
+
+ABSTRACT
+Ransomware remains a major threat to business continuity, particularly on the Windows platform where Portable Executable (PE) files dominate. Existing PE-based static detection methods suffer from limited feature coverage, weak generalization, and poor interpretability. To address these challenges, we propose PE-Sleuth, a framework that fuses program-level semantics with static features, while leveraging large language models (LLMs) for classification and rationale generation. PE files are decompiled into C source, partitioned by function-call structure, and analyzed at the block and program levels to capture semantic intent beyond raw bytes. These program-level semantics are combined with normalized static features such as imports and strings to inform binary classification by LLMs in both zero-shot and fine-tuned settings, with fine-tuning enabling domain adaptation and greater performance. Experiments on a public ransomware dataset demonstrate that PE-Sleuth achieves accuracy on par with or exceeding state-of-the-art baselines, while generating rationales that link predictions to evidence.
+
+Index Terms— Ransomware Detection, Portable Executable Files, Program-level Semantics, Static Features, Large Language Models
+
+1. INTRODUCTION
+Ransomware, which relies on encryption and extortion, has become one of the primary threats to business continuity and data availability. Industry reports indicate that its prevalence and impact continue to rise [1]. The dominance of the Windows platform in enterprises and public institutions makes static detection based on Portable Executable (PE) files of significant engineering value [2].
+
+Traditional PE-based ransomware detection methods include signature- and rule-based approaches [3, 4], machine learning classifiers using handcrafted features such as PE headers and strings [5, 6], and end-to-end models that consume raw bytes, image-like features, or API sequences [7, 8, 9]. Signature- and feature-based approaches are lightweight but fragile against obfuscation and family variants [10]. Deep end-to-end models can achieve high closed-set accuracy but often lack human-auditable evidence [11], and their generalization under distribution shifts remains weak [12]. In short, existing methods struggle with three bottlenecks: (i) limited feature coverage and adversarial resilience, (ii) poor interpretability, and (iii) high retraining costs for cross-domain adaptation.
+
+Large Language Models (LLMs) open new possibilities for static malware analysis by extracting higher-level code semantics [13]. However, research applying LLMs to PE ransomware detection remains scarce. Representative work such as LAMD applies LLM reasoning to Android apps by focusing on local contexts around security-sensitive APIs [14]. In the Windows/PE setting, by contrast, malicious logic is often distributed along call/data flows or hidden by packing and indirection. Focusing only on API-centered fragments risks missing critical payloads and causing false negatives.
+
+To address these gaps, we propose PE-Sleuth, a PE ransomware detection framework that fuses program-level semantics with static features, while leveraging LLMs for classification and rationale generation. The pipeline starts from decompiled code, partitions functions via call-graph structure, and performs block-level behavioral analysis that is aggregated into program-level semantics. This captures the semantic intent of the full program, providing stronger resilience to obfuscation. Complementarily, static features such as imports and strings are extracted and normalized under a strict budget, preserving lightweight yet critical global cues. On top of this representation, we apply LLM classification with both a zero-shot base model and supervised fine-tuning; the latter enables domain adaptation and stabilizes decision boundaries. Finally, controlled prompts generate interpretable rationales, linking triggering evidence to data-flow paths. The main contributions are as follows:
+
+• Introduction of PE-Sleuth, a PE-oriented ransomware detection framework that fuses program-level semantics with static features, achieving accuracy beyond either source alone, we have open-sourced the framework code1.
+• Release of task-adaptive Low-Rank Adaptation[15] (LoRA) fine-tuned weights that enhance stability and recall, we have open-sourced the fine-tuned model2.
+• Comprehensive evaluation on a public ransomware dataset, demonstrating that PE-Sleuth surpasses representative static baselines while providing interpretable outputs.
+
+2. METHODOLOGY
+
+This paper proposes a static LLM-based detection pipeline for PE samples, integrating decompilation, call-graph–aware partitioning, semantic abstraction, static feature extraction, and LLM classification with explanations, forming an end-to-end process from binary code to auditable conclusions.
+
+The pipeline is organized into four stages: (1) Decompile — batch decompile PE samples into C source code; (2) Semantic Abstraction — partition by function-call structure, derive block-level semantic, and then aggregate them into program-level semantics, capturing the overall intent of the program; (3) Static Features Extraction — extract and normalize global cues from the decompiled source under a strict length budget; and (4) Classification & Rationale — fuse the program-level semantics with static features to output classification and a concise analyst-oriented rationale. The overall workflow is shown in Fig. 1.
+
+2.1. Decompile
+
+The experiment uses idat.exe from IDA Pro for batch decompilation. A script traverses the dataset directory and triggers decompilation with Hex-Rays export parameters -Ohexrays:new:-nosave:target name:ALL, generating .c files in the specified output directory as inputs for subsequent steps. Decompilation bridges the gap between raw binary code and LLM-readable representations, converting low-level instructions into structured C source that exposes control flows, data references, and semantic cues.
+
+2.2. Semantic Abstraction
+
+Due to context-length constraints, full source code semantics cannot be ingested at once. Instead, code is segmented by call relationships presented in the function call graph (FCG) and analyzed block by block with the LLM to derive block-level semantics, which are then aggregated into program-level semantics. We pursue semantic completeness while minimizing LLM invocation cost and ensuring feasibility. The process contains three coordinated substeps—FCG Partitioning, Block-level Analysis, and Program-level Analysis.
+
+FCG Partitioning. Function lists and call edges are parsed from decompiled C code to build an FCG. The graph is partitioned into connected subgraphs and packed into blocks with a strict per-block token cap (32,768 in our setting). Call-proximate functions are prioritized to preserve semantic continuity; once a block approaches the cap, a new block is started to keep inference feasible. Extremely large functions are split with syntax-aware cuts (preferably at brace boundaries) and, if still oversized, by a sliding window so every segment remains processable. Hash-based deduplication eliminates repeated function bodies across blocks. After the initial pass, adjacent small blocks are greedily merged when the resulting size stays within 98% of the limit, reducing the number of LLM invocations without eroding code semantics.
+
+Block-level Analysis. Each block is analyzed with concise, neutral prompts that constrain the LLM to act as a “code behavior extractor,” yielding block-level semantics. We deliberately avoid benign/malicious cues to reduce bias and retain non-discriminative yet explanatory behaviors.
+
+Program-level Analysis. All block-level semantics are then merged and distilled into program-level semantics by the LLM. The prompt asks for a compact assessment highlighting the most informative behaviors and their rationales, surfacing high-value semantic signals for downstream classification.
+
+For quality control and transparency, the FCG and block assignments are rendered as in Fig. 2: nodes denote functions, edges denote calls, and colors indicate block membership. Disconnected subgraphs naturally map to different blocks; oversized subgraphs are split by call proximity.
+
+2.3. Static Features Extraction
+
+To capture global cues in long samples while leveraging IDA annotations, we extract and normalize static features under a 1,000-token length budget. The process contains two coordinated substeps—Extraction and Normalization.
+
+Extraction. From decompiled C code and IDA comment lines, we collect four categories: (i) strings, (ii) external API imports, (iii) global declarations, and (iv) suspicious indicators. Together they outline capability boundaries (file/registry/service control, process termination, cryptography) even when the import table is obfuscated. Typical signals include shadow copy deletion, large-scale encryption, ransom-note logic, and cryptographic initialization, without making any prior benign/malicious assumptions.
+
+Normalization. Items are canonicalized, deduplicated, and ranked with a budget-aware scheme; we then enforce per-category quotas of approximately 60 strings, 40 imports, and 30 declarations using deterministic ordering. Trimming removes lower-priority items first, ensuring that high-risk matches and entries along the main call path are preserved. The resulting compact representation retains the most valuable global evidence for downstream fusion with program-level semantics.
+
+2.4. Classification & Rationale
+
+We construct an intermediate representation (IR) by fusing static features with the program-level semantics, and perform inference in two substeps—Classification and Rationale Generation.
+
+Classification. The LLM is instructed to output a single label RANSOMWARE or BENIGN. To reduce false negatives, we include several strong-signal rules: if terms such as vssadmin or delete shadows are present; if .onion or ransom-related phrases appear; if decryption-related behaviors are triggered; if CryptAcquireContext or similar cryptographic-initialization APIs are called; or if the program-level semantics indicate large-scale file encryption, shadow copy deletion, ransom note generation, or service termination to facilitate encryption—then the sample is labeled RANSOMWARE. Otherwise, the decision is made holistically over the IR by the LLM. We evaluate two configurations: an unfine-tuned LLM (zero-shot capability) and a LoRA-fine-tuned LLM (supervised on the training set). To assess information contribution, we conduct ablations using only the program-level semantics and only static features, respectively.
+
+Rationale Generation. The classification and the IR are submitted again to the LLM to produce a concise, analyst-oriented rationale. The prompt focuses on triggering evidence, affected targets, and potential false positives, thereby supporting auditability and reproducibility.
+
+3. EXPERIMENTS AND EVALUATION
+
+3.1. Dataset
+
+The experiments use the Ransomware PE Header Feature Dataset[16], Mendeley Data version 3. This dataset contains 2,157 Windows executable samples, including 1,134 benign samples and 1,023 ransomware samples. It provides both feature files extracted from the first 1,024 bytes of the PE header and the corresponding binaries. In this work, only the binary samples are used, which are decompiled via IDA Pro and then used as input. The dataset is split into training and testing sets at a ratio of 7:3. Intermediate representations from the training set are combined with ground-truth labels to construct fine-tuning data.
+
+3.2. Experimental Environment Configuration
+
+The experiments are conducted on the AutoDL cloud computing platform with 20 virtual CPUs (Intel Xeon Platinum 8470Q) and a single 48 GB virtual GPU. The model used is Qwen3-14B (14-billion-parameter), with the entire workflow localized and without calling external APIs. Inference employs BitsAndBytes[17] 4-bit nf4 quantization with FlashAttention[18] enabled. The maximum context length is 32,768, the maximum generation length is 512, temperature is set to 0.5, and top p to 0.9, with sampling enabled and thinking mode disabled. Computation uses bfloat16 or float16 depending on hardware support. Fine-tuning is performed with LLaMA-Factory in the supervised fine-tuning (SFT) stage, using LoRA[15] with rank 24, alpha 48, dropout 0.15, and q4 quantization for training. Evaluation metrics include accuracy (ACC), precision, recall, and F1 score (F1).
+
+3.3. Experimental Results
+
+To support reproducibility, the experimental code and the LoRA weight repository have been open-sourced (see Section 1). Table 1 reports the scores of the base model and the fine-tuned model under different input configurations.
+
+When using both static features and program-level semantics, Fine-tuned-Full achieves the best performance across all four metrics, with an ACC of 0.9718 and an F1 of 0.9703. Compared with Base-Full (F1 = 0.8077), the improvement is significant, mainly due to recall increasing from 0.7000 to 0.9667, while precision improves from 0.9545 to 0.9739. This indicates that after being fine-tuned with training samples, the model becomes better at identifying diverse ransomware behavior patterns.
+
+Both types of information contribute to performance. In the base model, Base-Full scores higher than Base-Semantics and Base-Static, and the same holds true in the fine-tuned setting, showing that static features and program-level semantics jointly enhance classification performance.
+
+The impact of information sources varies across training configurations. In the zero-shot setting, using only program-level semantics (Base-Semantics, F1 = 0.7870) achieves performance close to Base-Full and is clearly superior to Base-Static (F1 = 0.4895). This shows that without supervision signals, program-level semantics derived from source code are more effectively utilized by the model. In the supervised setting, using only static features (Fine-tuned-Static, F1 = 0.9470) achieves performance close to Fine-tuned-Full and much higher than Fine-tuned-Semantics (F1 = 0.7948), indicating that parameter updates on fixed-structure static features are more conducive to learning stable discriminative features.
+
+Overall, fine-tuning and information fusion yield the most consistent improvements. It is recommended to input both static features and program-level semantics during inference and to use fine-tuned weights in order to achieve a balance of high recall and high precision. In restricted scenarios where only single-source input is allowed, program-level semantics are preferred in zero-shot settings, while static features are preferred in supervised settings.
+
+On the Ransomware PE Header Feature Dataset [16], we compare the proposed method with three representative approaches: an optimized multilayer perceptron (MLP) [19] using PE header features, a convolutional neural network (CNN) [20] for feature representation learning, and a principal component analysis–naive Bayes (PCA-NB) [21] relying on dimension-reduced static features.
+
+Our method achieves performance comparable to or surpassing existing approaches, demonstrating the effectiveness of combining program-level semantics with static features under LLM-based detection, while additionally providing human-auditable outputs.
+
+4. CONCLUSION
+
+This paper presented PE-Sleuth, a ransomware detection framework that integrates program-level semantics with static features, while leveraging LLMs for classification and rationale generation. By decompiling PE files, partitioning function call graphs, and performing hierarchical semantic abstraction, our approach captures semantic intent beyond surface-level byte patterns. Complementary static features provide lightweight yet critical global signals, and their fusion enables robust and accurate classification. Experiments on a public ransomware dataset show that PE-Sleuth achieves performance on par with or exceeding representative baselines. Fine-tuning further enhances recall and stability, while rationale generation delivers concise explanations that support analyst review.
