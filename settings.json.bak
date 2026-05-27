@@ -1,0 +1,11 @@
+{
+    "model_name": "deepseek-v4-pro",
+    "api_key": "sk-xxxxxxxxxxxxxxxxxxxx",
+    "base_url": "https://api.deepseek.com",
+    "max_new_tokens": 512,
+    "temperature": 0.5,
+    "top_p": 0.9,
+    "max_retries": 5,
+    "retry_backoff_sec": 1.0,
+    "ida_path": "C:\\Program Files\\IDA Professional 9.2"
+}
